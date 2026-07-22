@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Premium Weather Glass-Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<!-- Leaflet CSS & JS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  :root { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+
+  body { 
+    font-family: 'Inter', sans-serif; 
+    transition: background-color .4s cubic-bezier(.4,0,.2,1); 
+    background: linear-gradient(135deg, #E0E7FF 0%, #F3E8FF 50%, #FCE7F3 100%);
+    background-attachment: fixed;
+  }
+  
+  html.dark body { 
+    background: #080B14; 
+  }
+
+  html[lang="ar"] body { font-family: 'Cairo', sans-serif; }
+  .glass-effect { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+
+  .sun-rays { animation: spin 22s linear infinite; transform-origin: center; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .drift { animation: drift 7s ease-in-out infinite; }
+  @keyframes drift { 0%,100% { transform: translateX(0) } 50% { transform: translateX(4px) } }
+
+  .fade-in { animation: fadeIn .5s ease both; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+
+  #hourlyStrip::-webkit-scrollbar { height: 5px; }
+  #hourlyStrip::-webkit-scrollbar-thumb { background: rgba(148,163,184,.4); border-radius: 10px; }
+  
+  #map { 
+    height: 180px; 
+    width: 100%; 
+    border-radius: 1rem; 
+    z-index: 1 !important; 
+    isolation: isolate;
+  }
+
+  .leaflet-pane { z-index: 1 !important; }
+  .leaflet-top, .leaflet-bottom { z-index: 2 !important; }
+</style>
+</head>
+<body id="bodyTag" class="min-h-screen antialiased flex items-center justify-center p-4 md:p-8 text-slate-800 dark:text-slate-100">
+
+<div class="w-full max-w-4xl flex flex-col gap-5 relative">
+
+\  <header id="headerCard" class="w-full flex items-center gap-2 p-2.5 rounded-2xl shadow-lg shadow-indigo-100/50 dark:shadow-none border transition-all duration-300 bg-white/70 dark:bg-slate-900/80 border-white/80 dark:border-slate-800 glass-effect z-30 relative">
+    <form id="searchForm" class="flex items-center gap-3 px-3 flex-1 group relative" role="search">
+      <i class="fas fa-search text-indigo-400 dark:text-slate-400 group-focus-within:text-violet-600 transition-colors" aria-hidden="true"></i>
+      <input type="text" id="cityInput" autocomplete="off" placeholder="Search location..."
+        aria-label="Search location"
+        class="bg-transparent border-none outline-none text-sm w-full font-semibold text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500">
+      <div id="suggestBox" class="hidden absolute top-12 left-0 right-0 bg-white/95 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-50 fade-in glass-effect" role="listbox"></div>
+    </form>
+
+    <div class="flex items-center gap-2">
+      <button id="geoBtn" type="button" title="Use my location" aria-label="Use my location"
+        class="w-10 h-10 flex items-center justify-center bg-indigo-50 dark:bg-slate-800 text-indigo-600 dark:text-blue-400 rounded-xl shadow-xs border border-indigo-100 dark:border-slate-700 cursor-pointer hover:scale-105 active:scale-95 transition-all">
+        <i class="fas fa-location-crosshairs text-base" aria-hidden="true"></i>
+      </button>
+      <button id="themeToggle" type="button" title="Toggle theme" aria-label="Toggle dark/light mode" class="w-10 h-10 flex items-center justify-center bg-amber-50 dark:bg-slate-800 text-amber-500 rounded-xl shadow-xs border border-amber-100 dark:border-slate-700 cursor-pointer hover:scale-105 active:scale-95 transition-all">
+        <i id="themeIcon" class="fas fa-sun text-lg" aria-hidden="true"></i>
+      </button>
+      <button id="langToggle" type="button" aria-label="Switch language" class="h-10 px-4 flex items-center gap-2 bg-indigo-50 dark:bg-slate-800 text-indigo-900 dark:text-slate-200 rounded-xl shadow-xs border border-indigo-100 dark:border-slate-700 cursor-pointer hover:scale-105 active:scale-95 transition-all text-xs font-bold tracking-wide">
+        <i class="fas fa-globe text-violet-500" aria-hidden="true"></i>
+        <span id="langText">العربية</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- تنبيه خطأ -->
+  <div id="errorBanner" class="hidden fade-in items-center gap-3 px-4 py-3 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-sm font-semibold glass-effect z-20" role="alert">
+    <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+    <span id="errorText">City not found. Try another search.</span>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-5 relative z-10">
+    
+    <!-- كرت الطقس الرئيسي -->
+    <main id="mainCard" class="md:col-span-2 w-full p-6 md:p-8 rounded-3xl shadow-xl shadow-indigo-100/50 dark:shadow-2xl border transition-all duration-500 relative overflow-hidden bg-white/75 dark:bg-slate-900 border-white/80 dark:border-slate-800 flex flex-col justify-between glass-effect z-10">
+      <div class="absolute -top-24 -right-24 w-48 h-48 bg-violet-400/20 dark:bg-rose-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div>
+        <div class="flex justify-between items-start">
+          <div>
+            <h1 id="locationName" class="text-2xl md:text-3xl font-black tracking-tight text-slate-800 dark:text-white mb-1">Gaza, PS</h1>
+            <p id="currentDate" class="text-xs font-extrabold uppercase tracking-widest text-violet-700 dark:text-rose-400 bg-violet-100/70 dark:bg-rose-950/40 px-3 py-1 rounded-full border border-violet-200/50 dark:border-rose-900/40 inline-block"></p>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between my-6">
+          <div class="flex items-center gap-4">
+            <div id="weatherIconWrap" class="text-6xl md:text-7xl">
+              <i id="weatherMainIcon" class="fas fa-sun text-amber-500 sun-rays" aria-hidden="true"></i>
+            </div>
+            <div>
+              <span id="weatherTemp" class="text-5xl md:text-6xl font-black tracking-tighter text-slate-900 dark:text-white">--°</span>
+              <p id="weatherDesc" class="text-sm font-bold text-slate-600 dark:text-slate-300 mt-1 capitalize">--</p>
+            </div>
+          </div>
+          <div>
+            <p id="feelsLike" class="text-xs font-bold text-indigo-900/70 dark:text-slate-400 bg-indigo-50/80 dark:bg-slate-800 px-3 py-1.5 rounded-xl border border-indigo-100 dark:border-slate-700"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- شبكة البيانات -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-indigo-100/60 dark:border-slate-800">
+        <div class="p-3 rounded-2xl bg-indigo-50/50 dark:bg-slate-950/40 border border-indigo-100/40 dark:border-slate-800/60">
+          <span id="windLabel" class="block text-[10px] text-slate-500 dark:text-slate-400 font-bold mb-1"><i class="fas fa-wind text-blue-500 me-1" aria-hidden="true"></i> Wind</span>
+          <span id="windValue" class="text-xs font-black text-slate-800 dark:text-slate-100">-- km/h</span>
+        </div>
+        <div class="p-3 rounded-2xl bg-indigo-50/50 dark:bg-slate-950/40 border border-indigo-100/40 dark:border-slate-800/60">
+          <span id="humidityLabel" class="block text-[10px] text-slate-500 dark:text-slate-400 font-bold mb-1"><i class="fas fa-droplet text-teal-500 me-1" aria-hidden="true"></i> Humidity</span>
+          <span id="humidityValue" class="text-xs font-black text-slate-800 dark:text-slate-100">-- %</span>
+        </div>
+        <div class="p-3 rounded-2xl bg-indigo-50/50 dark:bg-slate-950/40 border border-indigo-100/40 dark:border-slate-800/60">
+          <span id="pressureLabel" class="block text-[10px] text-slate-500 dark:text-slate-400 font-bold mb-1"><i class="fas fa-gauge text-purple-500 me-1" aria-hidden="true"></i> Pressure</span>
+          <span id="pressureValue" class="text-xs font-black text-slate-800 dark:text-slate-100">-- hPa</span>
+        </div>
+        <div class="p-3 rounded-2xl bg-indigo-50/50 dark:bg-slate-950/40 border border-indigo-100/40 dark:border-slate-800/60">
+          <span id="visibilityLabel" class="block text-[10px] text-slate-500 dark:text-slate-400 font-bold mb-1"><i class="fas fa-eye text-amber-500 me-1" aria-hidden="true"></i> Visibility</span>
+          <span id="visibilityValue" class="text-xs font-black text-slate-800 dark:text-slate-100">-- km</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- الخريطة -->
+    <div class="md:col-span-1 flex flex-col gap-4 relative z-0">
+      <div class="p-4 rounded-3xl bg-white/70 dark:bg-slate-900 border border-white/80 dark:border-slate-800 shadow-xl shadow-indigo-100/40 dark:shadow-none glass-effect overflow-hidden">
+        <h3 id="mapTitle" class="text-xs font-bold text-indigo-900/60 dark:text-slate-400 mb-3"><i class="fas fa-map-marked-alt text-violet-500 me-1" aria-hidden="true"></i> Live Map</h3>
+        <div id="map"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- توقعات الساعات -->
+  <section class="w-full p-5 rounded-3xl shadow-xl shadow-indigo-100/40 dark:shadow-none border bg-white/75 dark:bg-slate-900 border-white/80 dark:border-slate-800 glass-effect relative z-10">
+    <h2 id="hourlyTitle" class="text-xs font-extrabold uppercase tracking-widest text-indigo-900/60 dark:text-slate-400 mb-4 px-1">Next hours</h2>
+    <div id="hourlyStrip" class="flex gap-3 overflow-x-auto pb-2"></div>
+  </section>
+
+  <!-- توقعات 5 أيام -->
+  <section class="w-full p-5 rounded-3xl shadow-xl shadow-indigo-100/40 dark:shadow-none border bg-white/75 dark:bg-slate-900 border-white/80 dark:border-slate-800 glass-effect relative z-10">
+    <h2 id="dailyTitle" class="text-xs font-extrabold uppercase tracking-widest text-indigo-900/60 dark:text-slate-400 mb-3 px-1">5-day forecast</h2>
+    <div id="dailyList" class="flex flex-col divide-y divide-indigo-100/50 dark:divide-slate-800"></div>
+  </section>
+
+  <footer class="text-center text-xs font-bold uppercase tracking-widest text-indigo-900/50 dark:text-slate-600 mt-2">
+    <p id="footerText">Powered by Open-Meteo &bull; 2026</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const state = {
+    lang: localStorage.getItem('wx_lang') || 'en',
+    theme: localStorage.getItem('wx_theme') || 'light',
+    lat: parseFloat(localStorage.getItem('wx_lat')) || 31.5,
+    lon: parseFloat(localStorage.getItem('wx_lon')) || 34.45,
+    name: localStorage.getItem('wx_name') || 'Gaza, PS',
+  };
+
+  const el = (id) => document.getElementById(id);
+  const html = document.documentElement;
+
+  // إعداد الخريطة
+  let map = L.map('map', { zoomControl: false }).setView([state.lat, state.lon], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: 'OpenStreetMap'
+  }).addTo(map);
+  let marker = L.marker([state.lat, state.lon]).addTo(map);
+
+  const T = {
+    en: {
+      placeholder: "Search location...", errorCity: "City not found. Try another search.",
+      windLabel: "Wind Speed", humidityLabel: "Humidity", pressureLabel: "Pressure", visibilityLabel: "Visibility", mapTitle: "Live Map",
+      hourlyTitle: "Next hours", dailyTitle: "5-day forecast", langBtn: "العربية",
+      feelsLike: (t) => `Feels like ${t}°`, footer: "Powered by Open-Meteo • 2026",
+      geoError: "Couldn't get your location.", myLoc: "My Location",
+      days: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],
+      months: ["January","February","March","April","May","June","July","August","September","October","November","December"],
+      wmo: {
+        0:"Clear sky",1:"Mostly clear",2:"Partly cloudy",3:"Overcast",
+        45:"Fog",48:"Icy fog",51:"Light drizzle",53:"Drizzle",55:"Dense drizzle",
+        61:"Light rain",63:"Rain",65:"Heavy rain",71:"Light snow",73:"Snow",75:"Heavy snow",
+        80:"Rain showers",81:"Rain showers",82:"Violent showers",95:"Thunderstorm",96:"Thunderstorm w/ hail",99:"Severe thunderstorm"
+      }
+    },
+    ar: {
+      placeholder: "ابحث عن مكان...", errorCity: "لم يتم العثور على المدينة. جرّب بحث آخر.",
+      windLabel: "سرعة الرياح", humidityLabel: "الرطوبة", pressureLabel: "الضغط الجوي", visibilityLabel: "مدى الرؤية", mapTitle: "الخريطة الحية",
+      hourlyTitle: "الساعات القادمة", dailyTitle: "توقعات 5 أيام", langBtn: "English",
+      feelsLike: (t) => `الإحساس الحراري ${t}°`, footer: "بيانات من Open-Meteo • 2026",
+      geoError: "تعذّر تحديد موقعك.", myLoc: "موقعي الحالي",
+      days: ["الأحد","الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"],
+      months: ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"],
+      wmo: {
+        0:"صافية",1:"صافية غالباً",2:"غائم جزئياً",3:"غائم كلياً",
+        45:"ضباب",48:"ضباب متجمد",51:"رذاذ خفيف",53:"رذاذ",55:"رذاذ كثيف",
+        61:"مطر خفيف",63:"مطر",65:"مطر غزير",71:"ثلج خفيف",73:"ثلج",75:"ثلج غزير",
+        80:"زخات مطر",81:"زخات مطر",82:"زخات عنيفة",95:"عاصفة رعدية",96:"عاصفة رعدية مع برد",99:"عاصفة رعدية شديدة"
+      }
+    }
+  };
+
+  function weatherMeta(code, isDay){
+    const day = isDay !== false;
+    if(code === 0) return { icon: day ? 'fa-sun' : 'fa-moon', color: day ? 'text-amber-500' : 'text-indigo-400', kind:'clear' };
+    if([1,2].includes(code)) return { icon: day ? 'fa-cloud-sun' : 'fa-cloud-moon', color:'text-amber-400', kind:'cloud' };
+    if(code === 3) return { icon:'fa-cloud', color:'text-indigo-300 dark:text-slate-400', kind:'cloud' };
+    if([45,48].includes(code)) return { icon:'fa-smog', color:'text-indigo-300 dark:text-slate-400', kind:'fog' };
+    if([51,53,55,61,63,65,80,81,82].includes(code)) return { icon:'fa-cloud-rain', color:'text-blue-500', kind:'rain' };
+    if([71,73,75].includes(code)) return { icon:'fa-snowflake', color:'text-sky-400', kind:'snow' };
+    if([95,96,99].includes(code)) return { icon:'fa-bolt', color:'text-amber-500', kind:'storm' };
+    return { icon:'fa-cloud', color:'text-indigo-300 dark:text-slate-400', kind:'cloud' };
+  }
+
+  let lastData = null;
+
+  function fmtHour(isoStr, timezone){
+    try {
+      const date = new Date(isoStr);
+      return new Intl.DateTimeFormat(state.lang === 'ar' ? 'ar-EG' : 'en-US', {
+        hour: 'numeric',
+        hour12: true,
+        timeZone: timezone || 'auto'
+      }).format(date);
+    } catch (e) {
+      return new Date(isoStr).toLocaleTimeString([], { hour: 'numeric', hour12: true });
+    }
+  }
+
+  function renderStatic(){
+    const t = T[state.lang];
+    html.lang = state.lang;
+    html.dir = state.lang === 'ar' ? 'rtl' : 'ltr';
+    el('cityInput').placeholder = t.placeholder;
+    el('windLabel').innerHTML = `<i class="fas fa-wind text-blue-500 me-1" aria-hidden="true"></i> ${t.windLabel}`;
+    el('humidityLabel').innerHTML = `<i class="fas fa-droplet text-teal-500 me-1" aria-hidden="true"></i> ${t.humidityLabel}`;
+    el('pressureLabel').innerHTML = `<i class="fas fa-gauge text-purple-500 me-1" aria-hidden="true"></i> ${t.pressureLabel}`;
+    el('visibilityLabel').innerHTML = `<i class="fas fa-eye text-amber-500 me-1" aria-hidden="true"></i> ${t.visibilityLabel}`;
+    el('mapTitle').innerHTML = `<i class="fas fa-map-marked-alt text-violet-500 me-1" aria-hidden="true"></i> ${t.mapTitle}`;
+    el('hourlyTitle').textContent = t.hourlyTitle;
+    el('dailyTitle').textContent = t.dailyTitle;
+    el('langText').textContent = t.langBtn;
+    el('footerText').textContent = t.footer;
+    el('errorText').textContent = t.errorCity;
+    el('locationName').textContent = state.name;
+
+    const now = new Date();
+    const dayName = t.days[now.getDay()];
+    const monthName = t.months[now.getMonth()];
+    el('currentDate').textContent = state.lang === 'ar'
+      ? `${dayName}، ${now.getDate()} ${monthName}`
+      : `${dayName}, ${monthName} ${now.getDate()}`;
+
+    if(lastData) renderWeather(lastData);
+  }
+
+  function renderWeather(data){
+    lastData = data;
+    const t = T[state.lang];
+    const cur = data.current;
+    const meta = weatherMeta(cur.weather_code, cur.is_day === 1);
+
+    el('weatherMainIcon').className = `fas ${meta.icon} ${meta.color} ${meta.kind==='clear' ? 'sun-rays' : meta.kind==='cloud' ? 'drift' : ''}`;
+    el('weatherTemp').textContent = `${Math.round(cur.temperature_2m)}°`;
+    el('weatherDesc').textContent = t.wmo[cur.weather_code] || t.wmo[3];
+    el('feelsLike').textContent = t.feelsLike(Math.round(cur.apparent_temperature));
+    el('windValue').textContent = `${Math.round(cur.wind_speed_10m)} km/h`;
+    el('humidityValue').textContent = `${cur.relative_humidity_2m}%`;
+    el('pressureValue').textContent = `${Math.round(cur.surface_pressure)} hPa`;
+    el('visibilityValue').textContent = `${(cur.visibility / 1000).toFixed(1)} km`;
+
+    // تحديث الخريطة
+    map.setView([state.lat, state.lon], 9);
+    marker.setLatLng([state.lat, state.lon]);
+    setTimeout(() => { map.invalidateSize(); }, 200);
+
+    // الساعات (بداية من الساعة الحالية)
+    const nowTimeStr = new Date().toISOString().slice(0, 13);
+    let startIndex = data.hourly.time.findIndex(t => t.startsWith(nowTimeStr));
+    if(startIndex === -1) startIndex = 0;
+
+    const hourly = data.hourly.time.slice(startIndex, startIndex + 15).map((timeIso, idx) => {
+      const i = startIndex + idx;
+      return {
+        time: timeIso, 
+        temp: data.hourly.temperature_2m[i], 
+        code: data.hourly.weather_code[i], 
+        isDay: data.hourly.is_day[i]
+      };
+    });
+
+    el('hourlyStrip').innerHTML = hourly.map(h => {
+      const m = weatherMeta(h.code, h.isDay === 1);
+      return `
+        <div class="flex flex-col items-center gap-2 shrink-0 w-20 py-3 rounded-2xl bg-indigo-50/40 dark:bg-slate-950/40 border border-indigo-100/50 dark:border-slate-800/60 fade-in">
+          <span class="text-[11px] font-bold text-indigo-900/60 dark:text-slate-400">${fmtHour(h.time, data.timezone)}</span>
+          <i class="fas ${m.icon} ${m.color} text-xl" aria-hidden="true"></i>
+          <span class="text-sm font-black text-slate-800 dark:text-slate-100">${Math.round(h.temp)}°</span>
+        </div>`;
+    }).join('');
+
+    const dayNames = T[state.lang].days;
+    const daily = data.daily.time.slice(0, 5).map((d, i) => ({
+      date: d, max: data.daily.temperature_2m_max[i], min: data.daily.temperature_2m_min[i], code: data.daily.weather_code[i]
+    }));
+    el('dailyList').innerHTML = daily.map((d, i) => {
+      const m = weatherMeta(d.code, true);
+      const dName = i === 0 ? (state.lang === 'ar' ? 'اليوم' : 'Today') : dayNames[new Date(d.date).getDay()];
+      return `
+        <div class="flex items-center justify-between py-3 px-1 fade-in">
+          <span class="text-sm font-bold text-slate-700 dark:text-slate-300 w-24">${dName}</span>
+          <i class="fas ${m.icon} ${m.color} text-lg w-8 text-center" aria-hidden="true"></i>
+          <span class="text-xs font-semibold text-indigo-900/50 dark:text-slate-400 flex-1 text-center">${T[state.lang].wmo[d.code] || ''}</span>
+          <span class="text-sm font-black text-slate-800 dark:text-slate-100">${Math.round(d.max)}°</span>
+          <span class="text-sm font-semibold text-indigo-900/40 dark:text-slate-500 ms-3">${Math.round(d.min)}°</span>
+        </div>`;
+    }).join('');
+  }
+
+  function showError(msg){
+    el('errorText').textContent = msg;
+    el('errorBanner').classList.remove('hidden');
+    el('errorBanner').classList.add('flex');
+    setTimeout(() => { el('errorBanner').classList.add('hidden'); el('errorBanner').classList.remove('flex'); }, 4000);
+  }
+
+  async function fetchWeather(lat, lon){
+    try{
+      state.lat = lat; state.lon = lon;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,surface_pressure,visibility` +
+        `&hourly=temperature_2m,weather_code,is_day` +
+        `&daily=weather_code,temperature_2m_max,temperature_2m_min` +
+        `&timezone=auto`;
+      const res = await fetch(url);
+      if(!res.ok) throw new Error();
+      const data = await res.json();
+      renderWeather(data);
+      localStorage.setItem('wx_lat', lat);
+      localStorage.setItem('wx_lon', lon);
+      localStorage.setItem('wx_name', state.name);
+    } catch(err){
+      showError(state.lang === 'ar' ? 'تعذّر تحميل بيانات الطقس.' : 'Could not load weather data.');
+    }
+  }
+
+  async function reverseGeocode(lat, lon){
+    try {
+      const url = `https://geocoding-api.open-meteo.com/v1/search?name=${lat},${lon}&count=1&language=${state.lang}&format=json`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if(data.results && data.results.length > 0){
+        const r = data.results[0];
+        return `${r.name}, ${r.country_code || ''}`;
+      }
+    } catch(e) {}
+    return T[state.lang].myLoc;
+  }
+
+  async function searchCity(query){
+    try {
+      const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=${state.lang}&format=json`;
+      const res = await fetch(url);
+      const data = await res.json();
+      return data.results || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  el('searchForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = el('cityInput').value.trim();
+    if(q.length >= 2){
+      const results = await searchCity(q);
+      if(results.length > 0){
+        selectCity(results[0]);
+      } else {
+        showError(T[state.lang].errorCity);
+      }
+    }
+  });
+
+  function selectCity(r){
+    state.name = `${r.name}, ${r.country_code || ''}`;
+    el('locationName').textContent = state.name;
+    fetchWeather(r.latitude, r.longitude);
+    el('cityInput').value = '';
+    el('suggestBox').classList.add('hidden');
+  }
+
+  let searchTimer = null;
+  el('cityInput').addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    if(q.length < 2){ el('suggestBox').classList.add('hidden'); return; }
+    searchTimer = setTimeout(async () => {
+      const results = await searchCity(q);
+      if(!results.length){ el('suggestBox').classList.add('hidden'); return; }
+      el('suggestBox').innerHTML = results.map(r => `
+        <button type="button" role="option" data-lat="${r.latitude}" data-lon="${r.longitude}" data-name="${r.name}, ${r.country_code || ''}"
+          class="w-full text-start px-4 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer transition-colors">
+          <i class="fas fa-location-dot text-violet-500 text-xs" aria-hidden="true"></i>${r.name}${r.admin1 ? ', ' + r.admin1 : ''}, ${r.country || ''}
+        </button>`).join('');
+      el('suggestBox').classList.remove('hidden');
+      el('suggestBox').querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.name = btn.dataset.name;
+          el('locationName').textContent = state.name;
+          fetchWeather(btn.dataset.lat, btn.dataset.lon);
+          el('cityInput').value = '';
+          el('suggestBox').classList.add('hidden');
+        });
+      });
+    }, 300);
+  });
+
+  document.addEventListener('click', (e) => {
+    if(!el('searchForm').contains(e.target)){
+      el('suggestBox').classList.add('hidden');
+    }
+  });
+
+  el('geoBtn').addEventListener('click', () => {
+    if(!navigator.geolocation){ showError(T[state.lang].geoError); return; }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        state.name = await reverseGeocode(latitude, longitude);
+        el('locationName').textContent = state.name;
+        fetchWeather(latitude, longitude);
+      },
+      () => showError(T[state.lang].geoError)
+    );
+  });
+
+  el('themeToggle').addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    applyTheme();
+  });
+
+  el('langToggle').addEventListener('click', () => {
+    state.lang = state.lang === 'en' ? 'ar' : 'en';
+    localStorage.setItem('wx_lang', state.lang);
+    renderStatic();
+  });
+
+  function applyTheme(){
+    html.classList.toggle('dark', state.theme === 'dark');
+    el('themeIcon').className = state.theme === 'dark' ? 'fas fa-moon text-lg text-indigo-400' : 'fas fa-sun text-lg text-amber-500';
+    localStorage.setItem('wx_theme', state.theme);
+  }
+
+  applyTheme();
+  renderStatic();
+  fetchWeather(state.lat, state.lon);
+})();
+</script>
+</body>
+</html>
